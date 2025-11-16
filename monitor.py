@@ -6,7 +6,7 @@ import os
 import re
 
 CRAIGSLIST_URL = "https://sfbay.craigslist.org/search/sfc/bia?purveyor=owner&sort=date"
-KEYWORD = "aventon"  # change to whatever you want
+KEYWORD = "bike"  # change to whatever you want
 LOOKBACK = timedelta(hours=2)
 
 
