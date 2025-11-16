@@ -6,43 +6,57 @@ import os
 import re
 
 CRAIGSLIST_URL = "https://sfbay.craigslist.org/search/sfc/bia?purveyor=owner&sort=date"
-KEYWORD = "bike"
+KEYWORD = "aventon"  # change to whatever you want
 LOOKBACK = timedelta(hours=2)
 
 
-# --- TIME PARSER ------------------------------------------------------------
+# ------------------------------
+# Time parsing
+# ------------------------------
 
 def parse_relative_time(text: str) -> datetime:
     """
-    Craigslist uses phrases like:
-    - "21 mins ago"
-    - "1h ago"
-    - "2h ago"
-    - "5h ago"
-
-    Convert those into actual datetimes.
+    Handles:
+        '21 mins ago'
+        '56 mins ago'
+        '1h ago'
+        '2h ago'
+        '11/14'
+        '11/14 potrero'
+        '11/14 Outer Richmond, SF'
+        '11/15 oakland'
     """
-    text = text.strip().lower()
 
+    text = text.strip().lower()
     now = datetime.utcnow()
 
-    # Minutes
+    # --- Case 1: X mins ago ---
     m = re.match(r"(\d+)\s*mins?\s*ago", text)
     if m:
-        mins = int(m.group(1))
-        return now - timedelta(minutes=mins)
+        return now - timedelta(minutes=int(m.group(1)))
 
-    # Hours: "1h ago", "2h ago"
+    # --- Case 2: Xh ago ---
     m = re.match(r"(\d+)\s*h\s*ago", text)
     if m:
-        hrs = int(m.group(1))
-        return now - timedelta(hours=hrs)
+        return now - timedelta(hours=int(m.group(1)))
 
-    # Fallback — assume now
+    # --- Case 3: MM/DD or MM/DD <location> ---
+    m = re.match(r"(\d{1,2})/(\d{1,2})", text)
+    if m:
+        month, day = int(m.group(1)), int(m.group(2))
+        year = now.year
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return now
+
+    # Fallback
     return now
 
 
-# --- SCRAPER ----------------------------------------------------------------
+# ------------------------------
+# Scraper
+# ------------------------------
 
 def fetch_listings():
     r = requests.get(CRAIGSLIST_URL, timeout=10)
@@ -50,81 +64,108 @@ def fetch_listings():
 
     listings = []
 
-    # Each listing container looks like:
-    # <div class="cl-search-result cl-search-view-mode-gallery" data-pid="...">
-    for post in soup.select(".cl-search-result"):
-        # Title is inside:
-        # <a ... class="posting-title"><span class="label">TITLE</span></a>
-        title_el = post.select_one(".posting-title .label")
+    # Universal selector for each posting block
+    posts = soup.select(".cl-search-result")
+    for post in posts:
+
+        # ---- Title ----
+        # Safest selector based on your HTML: <span class="label">TITLE</span>
+        title_el = post.select_one("span.label")
         if not title_el:
             continue
-
         title = title_el.get_text(strip=True)
 
-        # URL is same link as above
-        url_el = post.select_one(".posting-title")
-        url = url_el["href"] if url_el and url_el.has_attr("href") else None
+        # ---- URL ----
+        # Use the parent anchor of the label
+        link_el = title_el.find_parent("a")
+        url = link_el["href"] if link_el and link_el.has_attr("href") else None
 
-        # Time is inside:
-        # <div class="meta">56 mins ago<span ...>Neighborhood</span></div>
+        # ---- Time ----
         meta_el = post.select_one(".meta")
         if not meta_el:
             continue
 
-        # First piece of text before the separator is the relative time
-        # ex: "56 mins ago"
-        relative_str = meta_el.get_text(" ", strip=True).split(" ")[0:3]
-        # Reconstruct phrases like "56 mins ago" or "2h ago"
-        relative_str = " ".join(relative_str)
-
+        # Example meta: "21 mins ago", "11/14", "56 mins ago glen park"
+        relative_str = meta_el.get_text(" ", strip=True).split(" ")[0]
         posted_at = parse_relative_time(relative_str)
+
+        # ---- Price ----
+        price_el = post.select_one(".priceinfo")
+        price = price_el.get_text(strip=True) if price_el else None
+
+        # ---- Location (optional) ----
+        # After the first separator, location text lives in the same .meta
+        location = None
+        parts = meta_el.get_text(" ", strip=True).split(" ")
+        if len(parts) > 1:
+            location = " ".join(parts[1:])
 
         listings.append({
             "title": title,
             "url": url,
             "posted_at": posted_at,
+            "price": price,
+            "location": location,
         })
 
     return listings
 
 
-# --- REPORT BUILDER ---------------------------------------------------------
+# ------------------------------
+# Report
+# ------------------------------
 
 def build_report(listings):
-    cutoff = datetime.utcnow() - LOOKBACK
+    now = datetime.utcnow()
+    cutoff = now - LOOKBACK
 
+    total = len(listings)
     recent = [l for l in listings if l["posted_at"] >= cutoff]
     matches = [l for l in recent if KEYWORD.lower() in l["title"].lower()]
 
     lines = []
-    lines.append(f"Checked at: {datetime.utcnow().isoformat()} UTC")
-    lines.append(f"Listings checked in last 2h: {len(recent)}")
-    lines.append(f"bike matches: {len(matches)}\n")
+    lines.append(f"Checked at: {now.isoformat()} UTC")
+    lines.append(f"Total listings scraped: {total}")
+    lines.append(f"Listings in last 2h: {len(recent)}")
+    lines.append(f"Matches for '{KEYWORD}': {len(matches)}\n")
 
-    if matches:
-        for m in matches:
-            lines.append(f"- {m['title']}")
-            lines.append(f"  {m['url']}")
-            lines.append(f"  Posted: {m['posted_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
-    else:
-        lines.append("No bike listings found.")
+    if not matches:
+        lines.append("No matches found.")
+        return "\n".join(lines)
+
+    for m in matches:
+        lines.append(f"• {m['title']}")
+        if m["price"]:
+            lines.append(f"  Price: {m['price']}")
+        if m["location"]:
+            lines.append(f"  Location: {m['location']}")
+        lines.append(f"  Posted: {m['posted_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        lines.append(f"  {m['url']}\n")
 
     return "\n".join(lines)
 
 
-# --- SLACK ------------------------------------------------------------------
+# ------------------------------
+# Slack notification
+# ------------------------------
 
-def send_slack(text):
+def send_slack(text: str):
     webhook = os.environ["SLACK_WEBHOOK"]
     requests.post(webhook, json={"text": text})
 
 
-# --- MAIN -------------------------------------------------------------------
+# ------------------------------
+# Main
+# ------------------------------
 
 def main():
-    listings = fetch_listings()
-    report = build_report(listings)
-    send_slack(report)
+    try:
+        listings = fetch_listings()
+        report = build_report(listings)
+        send_slack(report)
+    except Exception as e:
+        send_slack(f"❌ Scraper crashed:\n{str(e)}")
+        raise
 
 
 if __name__ == "__main__":
