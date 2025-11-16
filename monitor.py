@@ -59,7 +59,16 @@ def parse_relative_time(text: str) -> datetime:
 # ------------------------------
 
 def fetch_listings():
-    r = requests.get(CRAIGSLIST_URL, timeout=10)
+    headers = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/118.0.5993.70 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://sfbay.craigslist.org/",
+    }
+    r = requests.get(CRAIGSLIST_URL, headers=headers, timeout=10)
     soup = BeautifulSoup(r.text, "html.parser")
 
     listings = []
