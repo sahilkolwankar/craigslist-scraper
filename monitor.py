@@ -6,7 +6,7 @@ import os
 import re
 
 CRAIGSLIST_URL = "https://sfbay.craigslist.org/search/sfc/bia?purveyor=owner&sort=date"
-KEYWORD = "aventon"
+KEYWORD = "bike"
 LOOKBACK = timedelta(hours=2)
 
 
@@ -99,7 +99,7 @@ def build_report(listings):
     lines = []
     lines.append(f"Checked at: {datetime.utcnow().isoformat()} UTC")
     lines.append(f"Listings checked in last 2h: {len(recent)}")
-    lines.append(f"Aventon matches: {len(matches)}\n")
+    lines.append(f"bike matches: {len(matches)}\n")
 
     if matches:
         for m in matches:
@@ -107,7 +107,7 @@ def build_report(listings):
             lines.append(f"  {m['url']}")
             lines.append(f"  Posted: {m['posted_at'].strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
     else:
-        lines.append("No Aventon listings found.")
+        lines.append("No bike listings found.")
 
     return "\n".join(lines)
 
